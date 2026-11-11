@@ -2,9 +2,15 @@
 
 ## Overview
 
-This repository contains the complete data processing and statistical analysis pipeline for the WOMI (Weight Observation and Motor Imagery) experiment. The study investigates motor cortex excitability changes during action observation (AO) and action observation combined with motor imagery (AOMI) using transcranial magnetic stimulation (TMS) and electromyography (EMG).
+This repository contains the data processing and statistical analysis pipeline for the WOMI (Weight Observation and Motor Imagery) experiment, accompanying the article *Individual Task Approach Modulates Corticospinal Excitability During Combined Action Observation and Motor Imagery*.
 
-**Key Research Question**: Does combining motor imagery with action observation enhance motor cortex facilitation compared to action observation alone?
+The study compares corticospinal excitability (CSE), measured as motor evoked potentials (MEPs) elicited by transcranial magnetic stimulation (TMS), during action observation (AO) and action observation combined with motor imagery (AOMI) in a weight estimation task (WET).
+
+**Hypotheses**:
+1. AOMI leads to higher CSE than AO.
+2. Observing or imagining the lifting of a heavier weight leads to higher CSE.
+
+The main outcome is the slope (gain) of the MEP recruitment curve across five TMS intensities. Weight estimation accuracy is analysed as an exploratory covariate.
 
 ---
 
@@ -15,304 +21,200 @@ womi_code/
 ├── code/
 │   ├── matlab/
 │   │   ├── preprocessing/
-│   │   │   └── main.m                            # MEP extraction and quality control
+│   │   │   └── main.m                    # MEP extraction and quality control
 │   │   └── analysis/
-│   │       └── z-transformation.m                # Within-participant standardisation
+│   │       └── z_transformation.m        # Within-participant z-transformation and aggregation
 │   └── R/
 │       ├── behavioural_analysis/
-│       │   └── accuracy.R                        # Weight estimation accuracy analysis
+│       │   └── accuracy_analysis.R       # Weight estimation accuracy (Results 1, 4)
 │       └── EMG_analysis/
-│           └── main_3way_ANCOVA_with_accuracy.R  # Main statistical model
+│           └── mep_analysis.R            # MEP analyses (Results 2, 3, 4)
 ├── docs/
-│   ├── MATLAB_DOCUMENTATION.md                   # Complete MATLAB reference
-│   └── R_DOCUMENTATION.md                        # Complete R reference
-├── requirements.R                                # R package dependencies
-├── LICENSE.md                                    # MIT license file
-└── README.md                                     # This file
+│   ├── MATLAB_DOCUMENTATION.md
+│   └── R_DOCUMENTATION.md
+├── requirements.R                        # R package dependencies
+├── LICENSE.md                            # MIT licence
+└── README.md
 ```
 
 ---
 
 ## Quick Start
 
-### For First-Time Users
-
-1. **Read the documentation**:
-   - [`MATLAB_DOCUMENTATION.md`](docs/MATLAB_DOCUMENTATION.md) for MATLAB details
-   - [`R_DOCUMENTATION.md`](docs/R_DOCUMENTATION.md) for R analysis details
-
-2. **Install R dependencies**:
+1. **Get the data** from OSF (see Data Requirements) and place it in a BIDS directory.
+2. **Install R packages**:
    ```r
    source("requirements.R")
    ```
-
-3. **Set paths**: Update `bidsDirectory` in each script to point to your local data location (see Configuration below).
-
-4. **Run in order** (see Pipeline section below).
-
-### For Experienced Users
+3. **Set the path** to your BIDS directory at the top of each script (see Configuration).
+4. **Run the scripts in this order**:
 
 ```matlab
-% MATLAB: Extract and z-transform MEPs
-cd('code/matlab/preprocessing/')
-main()
-cd('../analysis/')
-z-transformation()
+% MATLAB
+cd('code/matlab/preprocessing/');  main
+cd('../analysis/');                z_transformation
 ```
 
 ```r
-# R: Behavioural accuracy then ANCOVA
-source("code/R/behavioural_analysis/accuracy.R")
-source("code/R/EMG_analysis/main_3way_ANCOVA_with_accuracy.R")
+# R
+source("code/R/behavioural_analysis/accuracy_analysis.R")   # writes accuracy_by_condition.xlsx
+source("code/R/EMG_analysis/mep_analysis.R")                # needs accuracy_by_condition.xlsx
 ```
 
-**Total runtime**: ~10 minutes for 18 participants.
+All statistics and figures are printed to the console and figures are saved as PNG files (300 dpi).
 
 ---
 
 ## Experimental Design
 
-### Design Structure
-
-**Within-Subjects Design**: 2 (Condition) × 3 (Weight) × 5 (TMS Intensity)
+**Within-subject design**: 2 (condition) × 3 (weight response) × 5 (TMS intensity)
 
 | Factor | Levels | Description |
 |--------|--------|-------------|
-| **Condition** | AO, AOMI | Action Observation vs. AO + Motor Imagery |
-| **Weight** | Light, Moderate, Heavy | Subjective weight estimation (1–3) |
-| **TMS Intensity** | 90%, 100%, 110%, 120%, 130% | Percentage of resting motor threshold |
+| Condition | AO, AOMI | Action observation vs. action observation with motor imagery |
+| Weight response | Light, Moderate, Heavy | Weight reported by the participant on each trial |
+| TMS intensity | 90, 100, 110, 120, 130% RMT | Percentage of resting motor threshold |
 
-### Sample
-
-- **N = 18** participants
-- **Sessions**: 2 per participant (AO and AOMI)
-- **Trials**: 122 per session (before exclusion)
-- **Total trials**: 4,392 initial → 4,220 final (3.9% excluded)
-
-### Counterbalancing
-
-- Even participant IDs (2, 4, 6 ...): AO first, then AOMI
-- Odd participant IDs (1, 3, 5 ...): AOMI first, then AO
-
-Note: Only main trials (weight judgement trials) are included in the ANCOVA. Control trials are analysed separately at the aggregation stage.
+- **N = 18** participants, two sessions each (AO and AOMI, on separate days)
+- **Trials**: 122 per session; 4392 in total, 4220 after exclusions (3.9% excluded)
+- **Session order**: even participant IDs started with AO, odd IDs with AOMI (n = 9 each)
+- Each session also contained no-video control trials, which are analysed separately.
 
 ---
 
 ## Data Requirements
 
-This pipeline expects data in [BIDS](https://bids.neuroimaging.io/) format. Data are documented separately in the data repository README on OSF.
-
-**Expected directory structure**:
+Data are available on OSF and follow the [BIDS](https://bids.neuroimaging.io/) format. The data repository has its own README.
 
 ```
 /data/path/to/bids_directory/
 ├── sub-01/
 │   ├── ses-AO/
-│   │   ├── emg/
-│   │   │   └── sub-01_ses-AO_womi_emg.tsv.gz
-│   │   └── beh/
-│   │       └── sub-01_ses-AO_womi_beh.tsv
+│   │   ├── emg/sub-01_ses-AO_womi_emg.tsv.gz
+│   │   └── beh/sub-01_ses-AO_womi_beh.tsv
 │   └── ses-AOMI/
-│       ├── emg/
-│       │   └── sub-01_ses-AOMI_womi_emg.tsv.gz
-│       └── beh/
-│           └── sub-01_ses-AOMI_womi_beh.tsv
+│       ├── emg/sub-01_ses-AOMI_womi_emg.tsv.gz
+│       └── beh/sub-01_ses-AOMI_womi_beh.tsv
 ├── sub-02/
-└── ...
+├── ...
+└── derivatives/
+    ├── vmiq_womi.xlsx                    # VMIQ-2 scores (from OSF)
+    └── ADM_FDI_raw_MEPs_for_ANOVA.csv    # raw FDI and ADM MEPs (from OSF)
 ```
 
-**Key file contents**:
-
-- `*_emg.tsv.gz`: `time_relative_to_TMS_pulse_in_ms`, `FDI_in_mV`
+- `*_emg.tsv.gz`: `time_relative_to_TMS_pulse_in_ms`, `FDI_in_mV`, `ADM_in_mV`, `trial`
 - `*_beh.tsv`: `trial`, `event_type`, `code`
+- `vmiq_womi.xlsx`: `Participant`, `External`, `Internal`, `Kinaesthetic` (VMIQ-2 subscale scores)
+- `ADM_FDI_raw_MEPs_for_ANOVA.csv`: `Participant`, `Condition`, `Muscle` (FDI/ADM), `Intensity` (1–5), `MEP_Raw` (mV); trial-level raw MEPs of both muscles, preprocessed with an RMS threshold of 0.10 mV for comparable trial retention
 
 ---
 
 ## Analysis Pipeline
 
 ```
-Raw BIDS Data (EMG + Behavioural)
-         ↓
-┌────────────────────────────────┐
-│  MATLAB Stage 1: MEP Extract   │
-│  - Peak-to-peak calculation    │
-│  - Quality control filtering   │
-│  - Baseline RMS check          │
-└────────────────────────────────┘
-         ↓
-Cleaned MEP Data (per participant/session)
-         ↓
-┌────────────────────────────────┐
-│  MATLAB Stage 2: Z-Transform   │
-│  - Within-participant std      │
-│  - Aggregate by conditions     │
-└────────────────────────────────┘
-         ↓
-Standardised MEP Data + Summary CSVs
-         ↓
-┌────────────────────────────────┐
-│  R Stage 1: Behavioural Acc    │
-│  - Accuracy by condition       │
-│  - Session order effects       │
-│  - Weight response patterns    │
-└────────────────────────────────┘
-         ↓
-Accuracy Tables + Visualisations
-         ↓
-┌────────────────────────────────┐
-│  R Stage 2: Statistical Model  │
-│  - Repeated measures ANCOVA    │
-│  - Assumption checks           │
-│  - Post-hoc analyses           │
-└────────────────────────────────┘
-         ↓
-ANCOVA Results + Figures
+BIDS data (EMG + behaviour)
+        ↓
+MATLAB 1  main.m               MEP extraction, quality control
+        ↓
+MATLAB 2  z_transformation.m   within-participant z-scores, aggregation
+        ↓
+R 1       accuracy_analysis.R  weight estimation accuracy
+        ↓
+R 2       mep_analysis.R       recruitment-curve slopes, exploratory ANCOVAs,
+                               control and robustness analyses
 ```
 
 ---
 
 ## Configuration
 
-Update the path at the top of each script before running:
+Set the BIDS directory at the top of each script:
 
-| Script | Variable | Default |
-|--------|----------|---------|
-| `main.m` | `config.bidsDirectory` | `/data/path/to/bids_directory/` |
-| `z-transformation.m` | `config.bidsDirectory` | `/data/path/to/bids_directory/` |
-| `accuracy.R` | `bidsDirectory` | `/data/path/to/bids_directory/` |
-| `main_3way_ANCOVA_with_accuracy.R` | `bidsDirectory` | `/data/path/to/bids_directory/` |
+| Script | Variable |
+|--------|----------|
+| `main.m` | `config.bidsDirectory` |
+| `z_transformation.m` | `config.bidsDirectory` |
+| `accuracy_analysis.R` | `bidsDir` |
+| `mep_analysis.R` | `bidsDir` |
 
-**Key analysis parameters** (MATLAB `main.m`):
+**MEP preprocessing parameters** (`main.m`):
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| MEP window | 15–50 ms post-TMS | Peak-to-peak amplitude window |
-| Baseline window | −40 to −10 ms pre-TMS | Baseline RMS window |
-| Pre-contraction threshold | 0.15 mV | Max peak-to-peak before TMS |
-| Baseline RMS threshold | 0.05 mV | Max RMS in baseline window |
+| Parameter | Value |
+|-----------|-------|
+| MEP window (peak-to-peak) | 15–50 ms after the TMS pulse |
+| Pre-contraction window / threshold | −50 to 0 ms, 0.15 mV peak-to-peak |
+| Baseline RMS window / threshold | −40 to −10 ms, 0.05 mV |
+| Dummy trials | first video trial and first control trial of each session |
 
 ---
 
 ## Output Files
 
-All outputs are saved to BIDS-compatible derivatives directories.
+### MATLAB → `derivatives/mep_analysis/` and `derivatives/mep_ztransform/`
 
-### MATLAB Stage 1 → `/derivatives/mep_analysis/`
-
-- `sub-XX_ses-{AO,AOMI}_mep.tsv` — trial-level MEP data (BIDS)
-- `sub-XX_ses-{AO,AOMI}_mep.mat` — MATLAB format
-- 72 files total (36 TSV + 36 MAT)
-
-### MATLAB Stage 2 → `/derivatives/mep_ztransform/`
-
-- `sub-XX_ses-{AO,AOMI}_zmep.tsv` — z-transformed MEP data (BIDS)
-- `sub-XX_ses-{AO,AOMI}_zmep.mat` — MATLAB format
-- `mean_z_scores_control_vs_main.csv`
+- `sub-XX_ses-{AO,AOMI}_mep.tsv/.mat`: trial-level MEPs after exclusions
+- `sub-XX_ses-{AO,AOMI}_zmep.tsv/.mat`: trial-level z-scores
+- `mean_z_scores_control_vs_main.csv`: control vs. video trials per session (control-trial analysis)
 - `mean_z_scores_by_intensity.csv`
-- `mean_z_scores_by_intensity_and_weight.csv` ← input to R Stage 2
+- `mean_z_scores_by_intensity_and_weight.csv`: input to `mep_analysis.R`
 
-### R Stage 1 → `/derivatives/behavioural_analysis/`
+### `accuracy_analysis.R` → `derivatives/behavioural_analysis/`
 
-Excel tables:
-- `accuracy_by_condition.xlsx` ← input to R Stage 2
-- `accuracy_by_session_order.xlsx`
-- `accuracy_by_weight.xlsx`
+- `accuracy_by_condition.xlsx`: accuracy per participant in AO and AOMI (input to `mep_analysis.R`)
+- `Fig2_accuracy_by_weight.png`
+- `FigS1_accuracy_by_session.png`
+- `FigS2_accuracy_by_tms_intensity.png`
 
-Figures (PNG, 300 DPI):
-- `session_order_plot.png`
-- `condition_comparison_plot.png`
-- `condition_comparison_for_panel.png`
-- `weight_by_condition_plot.png`
-- `weight_responses_plot.png`
-- `behavioural_manuscript_figure.png`
+### `mep_analysis.R` → `derivatives/ancova_analysis/`
 
-### R Stage 2 → `/derivatives/ancova_analysis/`
+- `Fig3_zMEP_by_intensity.png`
+- `Fig4_accuracy_condition.png`
+- `FigS3_mep_by_muscle.png`
+- `FigS4_residual_qq_slope.png`
+- `FigS5_leave_one_out_slope.png`
 
-Results:
-- `merged_data.csv`
-- `ancova_results.txt`
-- `pairwise_intensity.csv`
-- `simple_slopes_highest_intensity.csv`
-- `interaction_by_intensity.csv`
-
-Assumption check plots:
-- `assumption_accuracy_distribution.png`
-- `assumption_linearity.png`
-
-Figures (PNG, 300 DPI):
-- `main_effect_condition.png`
-- `main_effect_intensity.png`
-- `interaction_highest_intensity.png`
-- `interaction_all_intensities_faceted.png`
-- `interaction_all_intensities_grid.png`
-- `effect_sizes_by_intensity.png`
-- `slopes_by_intensity.png`
-- `marginal_means_intensity.png`
-- `combined_poster_plot.png`
-- `manuscript_figure_combined.png`
+Tables ST1–ST4 are printed to the console in the format of the Supplementary Material.
 
 ---
 
 ## Statistical Methods
 
-### Within-Participant Z-Transformation
+All models are fitted with `afex::aov_car` (Type III sums of squares). Greenhouse–Geisser correction is applied only to effects for which Mauchly's test is significant (p < 0.05). Effect sizes are partial η² and Cohen's d. In the formulas, `id` is the participant and `accuracy_c` is the mean-centred weight estimation accuracy (mean of AO and AOMI). In `afex`, a covariate is automatically crossed with all within-subject factors, so `accuracy_c + condition * weight` also tests the interactions of accuracy with condition and weight.
 
-MEPs are standardised within each participant across both sessions:
+**Z-transformation**: one mean and SD per participant, computed from all valid trials pooled across both sessions, all intensities and both trial types (video and control).
 
-```
-z = (MEP − participant_mean) / participant_SD
-```
+**Recruitment curve**: for each participant, condition and weight response, the least-squares slope of the z-scored MEPs on TMS intensity (z per 10% RMT).
 
-This removes individual baseline differences (e.g., skull thickness, coil distance) while preserving within-participant experimental effects.
+| Analysis | Model |
+|----------|-------|
+| Hypotheses 1 and 2 | `slope ~ condition * weight + Error(id / (condition * weight))` |
+| Accuracy (Table ST1) | `slope ~ accuracy_c + condition * weight + Error(id / (condition * weight))` |
+| Full zMEP model (Table ST2) | `zMEP ~ accuracy_c + condition * weight * intensity + Error(id / (condition * weight * intensity))` |
+| Per intensity (Table ST3) | `zMEP ~ accuracy_c + condition * weight + Error(id / (condition * weight))`, Bonferroni-corrected over five intensities |
+| Session order (Table ST4) | `slope ~ order + accuracy_c + condition * weight + Error(id / (condition * weight))` |
 
-### Repeated Measures ANCOVA
-
-```
-zMEP ~ accuracy_c + condition × weight × intensity
-       + Error(participant / (condition × weight × intensity))
-```
-
-- **Within-subjects factors**: condition (2), weight (3), intensity (5)
-- **Covariate**: behavioural accuracy (mean-centred)
-- **Sphericity correction**: Greenhouse–Geisser where Mauchly's test is significant
-- **Effect sizes**: partial η²
-- **Post-hoc**: Bonferroni-corrected pairwise comparisons for intensity; simple slopes if accuracy interactions are significant
+Control and robustness analyses: imagery ability (VMIQ-2) as a second covariate, no-video control trials (paired t-test), FDI vs. ADM (muscle × condition × intensity on raw MEPs), Shapiro–Wilk test of the residuals, permutation test (10,000 permutations) and leave-one-participant-out analysis of the accuracy × condition interaction on the slope.
 
 ---
 
 ## Prerequisites
 
-### Software
+- **MATLAB** R2019b or later (Statistics and Machine Learning Toolbox)
+- **R** 4.0 or later; packages listed in `requirements.R`
 
-- **MATLAB** R2019b or later (Statistics and Machine Learning Toolbox required)
-- **R** 4.0 or later (RStudio recommended)
+---
 
-### R Packages
+## Use of AI Tools
 
-```r
-source("requirements.R")
-```
-
-Or manually:
-
-```r
-install.packages("pacman")
-pacman::p_load(
-  tidyverse, haven, psych, writexl, afex, emmeans,
-  patchwork, effectsize, RColorBrewer, readxl,
-  car, lme4, lmerTest
-)
-```
+The MATLAB and R code was developed with the assistance of an AI tool (Claude, Anthropic), which was used for code generation, restructuring and debugging. All analyses were specified by the authors, and all code and results were reviewed and verified by the authors.
 
 ---
 
 ## Citation
 
-If you use this pipeline, please cite:
-
 ```bibtex
 @article{womi_2026,
-  title   = {Individual Differences in Corticospinal Excitability During Combined Action Observation and Motor Imagery Depend on Task Approach},
+  title   = {Individual Task Approach Modulates Corticospinal Excitability During Combined Action Observation and Motor Imagery},
   author  = {Lange, Yassamin and Nesbit, Emma and Hermsdoerfer, Joachim and Stadler, Waltraud},
   journal = {[Journal Name]},
   year    = {2026},
@@ -324,24 +226,24 @@ If you use this pipeline, please cite:
 
 ## License
 
-MIT — see `LICENSE.md`.
+MIT, see `LICENSE.md`.
 
 ---
 
 ## Contributors
 
-- **Study Design**: Yassamin Lange, Emma Nesbit, Waltraud Stadler
-- **Data Collection**: Yassamin Lange, Emma Nesbit
-- **Analysis Pipeline**: Emma Nesbit
-- **Code Review**: Yassamin Lange, Waltraud Stadler
+- **Study design**: Yassamin Lange, Emma Nesbit, Waltraud Stadler
+- **Data collection**: Yassamin Lange, Emma Nesbit
+- **Analysis pipeline**: Emma Nesbit
+- **Code review**: Yassamin Lange, Waltraud Stadler
 
 ---
 
 ## Contact
 
-**Emma Nesbit** — nesbit@cbs.mpg.de  
-Max Planck Institute for Human Cognitive and Brain Sciences  
-GitHub Issues for bug reports· GitHub Discussions for questions
+**Emma Nesbit**: nesbit@cbs.mpg.de
+Max Planck Institute for Human Cognitive and Brain Sciences
+Use GitHub Issues for bug reports and GitHub Discussions for questions.
 
 ---
 
@@ -356,7 +258,6 @@ We thank the Chair of Human Movement Science at TUM for providing facilities and
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | April 2026 | Initial release with complete BIDS pipeline |
+| 2.0.0 | November 2026 | Revised analyses for resubmission: recruitment-curve slope as main outcome; per-intensity mixed models replaced by Bonferroni-corrected ANCOVAs; Greenhouse–Geisser only where Mauchly's test is significant; added control and robustness analyses; scripts reorganised to follow the Results; figures renamed to match the manuscript |
 
----
-
-**Tested with**: MATLAB R2023a · R 4.3.1
+**Tested with**: MATLAB R2023a · R 4.3.3
