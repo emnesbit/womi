@@ -2,714 +2,137 @@
 
 ## Overview
 
-The R pipeline processes TMS-EMG and behavioural data through two main stages:
-1. **Behavioural Accuracy Analysis** (`accuracy.R`)
-2. **MEP ANCOVA Analysis** (`main_3way_ANCOVA_with_accuracy.R`)
+The R pipeline has two scripts, which are run in this order:
+
+1. `accuracy_analysis.R`: weight estimation accuracy (Results, Sections 1 and 4)
+2. `mep_analysis.R`: MEP analyses (Results, Sections 2–4)
+
+Both scripts follow the order of the Results. All statistics are printed to the console, and figures are saved as PNG files (300 dpi). Tables ST1–ST4 are printed in the format of the Supplementary Material.
+
+**Packages** (see `requirements.R`): tidyverse, readxl, writexl, afex, emmeans, effectsize, broom, patchwork, RColorBrewer.
+
+**Configuration**: set `bidsDir` at the top of each script to your BIDS directory.
 
 ---
 
-## Stage 1: Behavioural Accuracy Analysis (`accuracy.R`)
+## Shared conventions
 
-### Purpose
-Extracts and analyses behavioural accuracy data from BIDS-formatted files, tests for session order and condition effects on weight discrimination performance, and generates publication-ready visualisations.
-
-### Required Packages
-
-```r
-pacman::p_load(
-  tidyverse,      # Data manipulation and plotting
-  haven,          # Data import
-  psych,          # Descriptive statistics
-  writexl,        # Excel output
-  afex,           # Repeated measures ANOVA
-  emmeans,        # Estimated marginal means
-  patchwork,      # Multi-panel figures
-  effectsize,     # Cohen's d and eta squared
-  RColorBrewer    # Colour palettes
-)
-```
-
-### Input Files
-
-The script reads directly from BIDS-formatted behavioural data:
-
-```
-/data/path/to/bids_directory/
-├── sub-01/
-│   ├── ses-AO/
-│   │   └── beh/
-│   │       └── sub-01_ses-AO_womi_beh.tsv
-│   └── ses-AOMI/
-│       └── beh/
-│           └── sub-01_ses-AOMI_womi_beh.tsv
-├── sub-02/
-└── ...
-```
-
-**Behavioural File Format** (`*_beh.tsv`):
-- `trial`: Trial number
-- `event_type`: Event category (e.g., `weight_in_video`, `weight_estimation_response`, `Control_TMS_pulse`)
-- `code`: Event value
-
-### Configuration Parameters
-
-```r
-bidsDirectory  <- "/data/path/to/bids_directory/"
-outputDirectory <- file.path(bidsDirectory, "derivatives", "behavioural_analysis")
-
-participants   <- 1:18
-sessions       <- c("AO", "AOMI")
-
-# Session order: odd participants start with AOMI, even with AO
-sessionOrder   <- ifelse(participants %% 2 == 0, "AO", "AOMI")
-```
-
-### Processing Steps
-
-#### Part 1: Data Extraction
-```r
-aoData   <- extractBehaviouralData(p, "AO")
-aomiData <- extractBehaviouralData(p, "AOMI")
-```
-
-For each participant and session, `extractBehaviouralData()`:
-- Reads the BIDS `.tsv` behavioural file
-- Identifies control trials via the presence of `Control_TMS_pulse` event type
-- Extracts `weight_in_video` (weight shown) and `weight_estimation_response` (participant response) for main trials
-- Excludes trial 1 (dummy), control trials, and rows with missing weight or response values
-- Calculates trial-level accuracy (`correct = weightShown == weightResponse`)
-- Returns overall accuracy, trial counts, and per-weight-response accuracy
-
-**Trial Exclusion Criteria**:
-| Criterion | Reason |
-|-----------|--------|
-| `isControl == TRUE` | Control trials have no weight judgment |
-| `trial == 1` | First trial excluded as dummy |
-| `is.na(weightShown)` | Missing stimulus information |
-| `is.na(weightResponse)` | Missing participant response |
-
-#### Part 2: Summary Tables
-
-Per-participant accuracy is collated into three summary tables, each saved as `.xlsx`:
-
-| Output File | Contents |
-|-------------|----------|
-| `accuracy_by_condition.xlsx` | Per-participant accuracy for AO and AOMI sessions |
-| `accuracy_by_session_order.xlsx` | Accuracy by first vs. second session (session order) |
-| `accuracy_by_weight.xlsx` | Accuracy broken down by weight response (1–3) for each session |
-
-#### Part 3: Session Order Analysis (Session 1 vs. Session 2)
-
-Tests whether accuracy differs between the first and second experimental session, regardless of which condition was completed first:
-
-```r
-# Normality check on difference scores
-shapiro.test(Session1 - Session2)
-
-# Paired t-test
-t.test(Session1, Session2, paired = TRUE, conf.level = 0.95)
-
-# Effect size
-cohens_d(Session1, Session2, paired = TRUE)
-```
-
-**Output**: `session_order_plot.png`  
-Paired line plot showing individual participant trajectories from Session 1 to Session 2, with points coloured by condition (AO/AOMI) and group mean ± 95% CI overlaid.
-
-#### Part 4: Condition Analysis (AO vs. AOMI)
-
-Tests whether accuracy differs between the Action Observation (AO) and Action Observation with Motor Imagery (AOMI) conditions:
-
-```r
-# Normality check on difference scores
-shapiro.test(AO - AOMI)
-
-# Paired t-test
-t.test(AO, AOMI, paired = TRUE, conf.level = 0.95)
-
-# Effect size
-cohens_d(AO, AOMI, paired = TRUE)
-```
-
-**Output**: `condition_comparison_plot.png`, `condition_comparison_for_panel.png`  
-Paired line plots with individual trajectories and group mean ± 95% CI. The panel version omits the title.
-
-#### Part 5: Weight Response Analysis
-
-Tests the effect of weight response category (Light/Moderate/Heavy) and condition on accuracy using repeated measures ANOVA:
-
-**Two-Way Repeated Measures ANOVA** (condition × weight):
-```r
-aov_car(
-  accuracy ~ condition * weight + 
-    Error(participantID / (condition * weight)),
-  data = weightData,
-  type = 3
-)
-```
-
-- Mauchly's test of sphericity is run for the `weight` factor and the `condition × weight` interaction (condition has only 2 levels and is exempt)
-- Greenhouse–Geisser correction applied where sphericity is violated (p < .05)
-- Partial η² reported as effect size
-
-**One-Way Repeated Measures ANOVA** (weight only):
-```r
-aov_car(
-  accuracy ~ weight + Error(participantID / weight),
-  data = weightData,
-  type = 3,
-  fun_aggregate = mean
-)
-```
-
-**Post-Hoc Comparisons** (Bonferroni-corrected pairwise):
-```r
-emmeans(anova1Way, pairwise ~ weight, adjust = "bonferroni")
-```
-
-**Chi-Square Test** (uniform response distribution):
-```r
-chisq.test(observed, p = c(1/3, 1/3, 1/3))
-```
-
-**Outputs**: `weight_by_condition_plot.png`, `weight_responses_plot.png`
-
-#### Part 6: Combined Manuscript Figure
-
-A two-panel figure combining the session order and weight response plots:
-
-```r
-behaviouralManuscriptFigure <- orderPlotA | weightPlotB
-```
-
-**Output**: `behavioural_manuscript_figure.png` (14 × 6 inches, 300 dpi)
-
-| Panel | Content |
-|-------|---------|
-| A (left) | Session order effects (S1 vs. S2) |
-| B (right) | Accuracy by weight response (Light/Moderate/Heavy) |
-
-### Output Files
-
-Saved to: `/derivatives/behavioural_analysis/`
-
-```
-accuracy_by_condition.xlsx
-accuracy_by_session_order.xlsx
-accuracy_by_weight.xlsx
-session_order_plot.png
-condition_comparison_plot.png
-condition_comparison_for_panel.png
-weight_by_condition_plot.png
-weight_responses_plot.png
-behavioural_manuscript_figure.png
-```
-
-### Colour Conventions
-
-| Condition / Weight | Hex Code |
-|--------------------|----------|
-| AO | `#F8766D` (red) |
-| AOMI | `#00BFC4` (blue) |
-| Light weight | `#FDD0A2` |
-| Moderate weight | `#FDAE6B` |
-| Heavy weight | `#E6550D` |
-
-### Expected Console Output
-
-```
-=== PART 1: EXTRACTING BEHAVIOURAL DATA ===
-
-Processing participant 01...
-Processing participant 02...
-...
-=== Data extraction complete ===
-Total participants: 18
-Total trials: XXXX
-
-=== PART 2: CREATING SUMMARY TABLES ===
-Mean accuracies:
-  AO:   X.XXX (SD: X.XXX)
-  AOMI: X.XXX (SD: X.XXX)
-
-=== PART 3: SESSION ORDER ANALYSIS (S1 vs S2) ===
-[Descriptives, Shapiro-Wilk, t-test, Cohen's d printed]
-
-=== PART 4: CONDITION ANALYSIS (AO vs AOMI) ===
-[Descriptives, Shapiro-Wilk, t-test, Cohen's d printed]
-
-=== PART 5: WEIGHT RESPONSE ANALYSIS ===
-[Descriptives, Mauchly's test, ANOVA tables, post-hoc comparisons printed]
-
-=== PART 6: CREATING COMBINED MANUSCRIPT FIGURE ===
-Two-panel figure saved as: behavioural_manuscript_figure.png
-  - Panel A (left): Session order effects
-  - Panel B (right): Accuracy by weight response
-```
+- **Models**: all repeated-measures ANOVAs and ANCOVAs are fitted with `afex::aov_car` (Type III sums of squares). A covariate given in the formula is automatically crossed with all within-subject factors. `factorize = FALSE` keeps covariates numeric.
+- **Sphericity**: the helper `rmTable()` prints Mauchly's test and the Greenhouse–Geisser ε, and applies the correction only to effects for which Mauchly's test is significant (p < 0.05).
+- **Variables**: `id` is the participant, `accuracy_c` the mean-centred weight estimation accuracy (mean of AO and AOMI per participant).
+- **Session order**: even participant IDs started with AO, odd IDs with AOMI.
 
 ---
 
-## Stage 2: MEP ANCOVA Analysis (`main_3way_ANCOVA_with_accuracy.R`)
+## 1. `accuracy_analysis.R`
 
-### Purpose
-Performs a three-way repeated measures ANCOVA (condition × weight response × TMS intensity) on z-transformed MEP amplitudes, with behavioural accuracy as a between-subject covariate. Conducts assumption checks, sphericity corrections, post-hoc analyses, and intensity-specific follow-up models.
+### Input
 
-### Required Packages
+- `sub-XX/ses-{AO,AOMI}/beh/sub-XX_ses-{AO,AOMI}_womi_beh.tsv` (BIDS)
+- `derivatives/vmiq_womi.xlsx` (VMIQ-2 scores, from OSF)
 
-```r
-pacman::p_load(
-  tidyverse,    # Data manipulation and plotting
-  readxl,       # Excel import
-  afex,         # Repeated measures ANCOVA
-  emmeans,      # Estimated marginal means and simple slopes
-  effectsize,   # Partial eta squared
-  car,          # Multivariate tests and VIF
-  lme4,         # Linear mixed models
-  lmerTest,     # p-values for mixed models
-  patchwork,    # Multi-panel figures
-  RColorBrewer  # Colour palettes
-)
-```
+### Data preparation
 
-### Input Files
+For each session, one row per trial is created with the weight shown, the weight response and the TMS intensity. Control trials, the first (dummy) trial and trials without a response are removed. A trial is correct if the response matches the weight shown. Accuracy is the proportion of correct trials per participant and condition, and is saved to `accuracy_by_condition.xlsx`.
 
-This script requires outputs from both Stage 1 (`accuracy.R`) and the MATLAB z-transformation pipeline (`z-transformation.m`):
+The helper `pct()` prints proportions as percentages with two decimals.
 
-```
-/derivatives/
-├── behavioural_analysis/
-│   └── accuracy_by_condition.xlsx          ← From accuracy.R
-└── mep_ztransform/
-    └── mean_z_scores_by_intensity_and_weight.csv  ← From z-transformation.m
-```
+### Section 1: Weight estimation accuracy
 
-**Z-Scores File Format** (`mean_z_scores_by_intensity_and_weight.csv`):
+| Analysis | Method |
+|----------|--------|
+| Accuracy vs. chance (1/3) | one-sided one-sample t-test per condition; Cohen's d against chance |
+| AO vs. AOMI | paired t-test, Cohen's d; Pearson correlation between conditions |
+| Condition × weight response | `accuracy ~ condition * weight + Error(id / (condition * weight))` |
+| Weight responses | Bonferroni-corrected post-hoc comparisons, pooled over conditions |
+| Response bias | chi-square goodness-of-fit test on response counts |
 
-Columns follow the pattern `{Session}_{TrialType}_{Weight}_{Intensity}`:
-- Control conditions: `AO_Control_1` through `AOMI_Control_5` (2 sessions × 5 intensities)
-- Main trial conditions: `AO_WtResp_1_1` through `AOMI_WtResp_3_5` (2 sessions × 3 weights × 5 intensities)
+**Figure 2**: accuracy by weight response in AO and AOMI. Each participant has one colour in both panels; grey lines connect a participant's values; black diamonds show the group mean ± SD; brackets show the post-hoc tests and the condition effect.
 
-**Accuracy File Format** (`accuracy_by_condition.xlsx`):
+### Section 4: Stability of weight estimation accuracy
 
-| Column | Description |
-|--------|-------------|
-| participant | Participant number (1–18) |
-| AO | Proportion correct in AO session |
-| AOMI | Proportion correct in AOMI session |
+| Analysis | Method |
+|----------|--------|
+| Session 1 vs. 2 | paired t-test (Figure S1) |
+| AO first vs. AOMI first | Welch t-test on mean accuracy across conditions |
+| TMS intensity | `accuracy ~ intensity + Error(id / intensity)` (Figure S2) |
+| Imagery vividness | Pearson correlations of AO and AOMI accuracy with the VMIQ-2 mean score and subscales, Holm-corrected over eight tests |
 
-### Configuration Parameters
+### Output (`derivatives/behavioural_analysis/`)
 
-```r
-bidsDirectory    <- "/data/path/to/bids_directory/"
-behaviouralDir   <- file.path(bidsDirectory, "derivatives", "behavioural_analysis")
-zScoresDir       <- file.path(bidsDirectory, "derivatives", "mep_ztransform")
-outputDirectory  <- file.path(bidsDirectory, "derivatives", "ancova_analysis")
-```
-
-### Processing Steps
-
-#### Part 1: Load and Merge Data
-
-```r
-# Load accuracy (averaged across sessions)
-dfAccuracy <- read_excel(accuracyFile) %>%
-  mutate(accuracy = (AO + AOMI) / 2) %>%
-  select(participant, accuracy)
-
-# Load z-transformed MEP means
-dfZScores <- read_csv(zScoresFile)
-
-# Merge by participant ID
-mergedData <- dfZScores %>%
-  left_join(dfAccuracy, by = c("participant_num" = "participant"))
-```
-
-**Output**: `merged_data.csv`
-
-#### Part 2: Reshape to Long Format
-
-```r
-dataLong <- mergedData %>%
-  pivot_longer(
-    cols = matches("^(AO|AOMI)_WtResp_\\d+_\\d+$"),
-    names_to = c("condition", "weight", "intensity"),
-    names_pattern = "(AO|AOMI)_WtResp_(\\d+)_(\\d+)",
-    values_to = "zMEP"
-  ) %>%
-  mutate(
-    condition  = factor(condition, levels = c("AO", "AOMI")),
-    weight     = factor(weight, levels = c("1","2","3"), 
-                        labels = c("Light","Moderate","Heavy")),
-    intensity  = factor(intensity, levels = c("1","2","3","4","5"),
-                        labels = c("90%","100%","110%","120%","130%")),
-    accuracy_c = scale(accuracy, center = TRUE, scale = FALSE)[,1]
-  )
-```
-
-Expected observations: 540 (18 participants × 2 conditions × 3 weights × 5 intensities). Missing cells (due to no trials in a combination) are dropped via `filter(!is.na(zMEP))`.
-
-The covariate `accuracy_c` is mean-centred to reduce multicollinearity and improve interpretability of main effects.
-
-#### Part 3: Assumption Checks
-
-Four assumptions are tested and their outputs saved as plots:
-
-**1. Normality of the Covariate**
-```r
-shapiro.test(dfAccuracy$accuracy)
-```
-Output: `assumption_accuracy_distribution.png`
-
-**2. Multicollinearity (VIF)**
-```r
-modelVIF <- lm(zMEP ~ accuracy + condition + weight + intensity, data = dataLong)
-vif(modelVIF)
-```
-VIF values > 10 trigger a warning. All factors are expected to be below this threshold.
-
-**3. Linearity (Covariate–DV Relationship)**
-
-Scatter plot of accuracy against z-MEP, with separate regression lines per condition:  
-Output: `assumption_linearity.png`
-
-**4. Homogeneity of Regression Slopes**
-```r
-modelSlopes <- lm(
-  zMEP ~ accuracy + condition + weight + intensity +
-    accuracy:condition + accuracy:weight + accuracy:intensity,
-  data = dataLong
-)
-anova(modelSlopes)
-```
-
-If any interaction involving `accuracy` is significant (p < .05), those interaction terms are retained in the ANCOVA model (`includeAccuracyInteractions <- TRUE`). This determination is made automatically and governs the model formula used in Part 4.
-
-#### Part 4: Repeated Measures ANCOVA
-
-The model formula depends on the outcome of the homogeneity check:
-
-**If slopes are homogeneous** (no significant interactions with accuracy):
-```r
-aov_car(
-  zMEP ~ accuracy_c + condition * weight * intensity +
-    Error(Participant_ID / (condition * weight * intensity)),
-  data = dataLong, type = 3
-)
-```
-
-**If slopes are heterogeneous** (significant accuracy interactions detected):
-```r
-aov_car(
-  zMEP ~ accuracy_c + accuracy_c:condition + accuracy_c:intensity +
-    condition * weight * intensity +
-    Error(Participant_ID / (condition * weight * intensity)),
-  data = dataLong, type = 3
-)
-```
-
-**Sphericity**:
-
-Mauchly's test is computed via a multivariate linear model (`car::Anova`) across all 30 within-subject cells. Greenhouse–Geisser correction is applied to any effect for which sphericity is violated:
-
-```r
-print(anova(anovaModel, correction = "GG", es = "pes"))
-```
-
-Effect sizes are reported as partial η²:
-```r
-eta_squared(anovaModel, ci = 0.95)
-```
-
-**Output**: `ancova_results.txt` (full results including assumption checks, Mauchly's tests, ANCOVA table, and effect sizes)
-
-#### Part 5: Post-Hoc Analyses
-
-**Pairwise comparisons for TMS intensity** (Bonferroni-corrected):
-```r
-emmeans(anovaModel, pairwise ~ intensity, adjust = "bonferroni")
-```
-Output: `pairwise_intensity.csv`
-
-**Estimated marginal means for TMS intensity**:
-```r
-emmeans(anovaModel, ~ intensity)
-```
-
-#### Part 6a: Follow-Up Analysis at Highest Intensity (130% RMT)
-
-A linear mixed model tests the accuracy × condition interaction at 130% RMT:
-
-```r
-lmer(
-  zMEP ~ accuracy_c * condition + (1 | Participant_ID),
-  data = dataHighest, REML = FALSE
-)
-```
-
-Simple slopes are extracted per condition:
-```r
-emtrends(modelHighest, ~ condition, var = "accuracy_c")
-```
-
-**Output**: `simple_slopes_highest_intensity.csv`, `interaction_highest_intensity.png`
-
-#### Part 6b: Accuracy × Condition Interaction Across All Intensities
-
-The accuracy × condition interaction is tested at each TMS intensity level separately using linear mixed models:
-
-```r
-for (intLevel in c("90%", "100%", "110%", "120%", "130%")) {
-  lmer(zMEP ~ accuracy_c * condition + (1 | Participant_ID), 
-       data = filter(dataLong, intensity == intLevel), REML = FALSE)
-}
-```
-
-For each intensity, the following are extracted and stored:
-
-| Metric | Description |
-|--------|-------------|
-| `F_value` | F-statistic for accuracy × condition interaction |
-| `df_num`, `df_denom` | Numerator and denominator degrees of freedom |
-| `p_value` | p-value for the interaction |
-| `effect_size` | Partial η² (SS_effect / (SS_effect + SS_residual)) |
-| `AO_slope`, `AO_slope_se`, `AO_slope_p` | Simple slope for AO condition |
-| `AOMI_slope`, `AOMI_slope_se`, `AOMI_slope_p` | Simple slope for AOMI condition |
-| `slope_difference` | AO slope − AOMI slope |
-
-**Outputs**:
-
-| File | Description |
-|------|-------------|
-| `interaction_by_intensity.csv` | Summary table of interaction statistics per intensity |
-| `interaction_all_intensities_faceted.png` | Faceted scatter plot across all intensities |
-| `interaction_all_intensities_grid.png` | Grid of individual intensity plots |
-| `effect_sizes_by_intensity.png` | Bar plot of partial η² with p-values annotated |
-| `slopes_by_intensity.png` | Line plot of simple slopes (AO vs. AOMI) across intensities |
-
-#### Part 7: Visualisations
-
-All plots use a common publication theme (`pubTheme`) with 14pt base font size. The following are generated:
-
-| Plot | File | Description |
-|------|------|-------------|
-| Main effect of condition | `main_effect_condition.png` | Violin + boxplot by AO/AOMI |
-| Main effect of TMS intensity | `main_effect_intensity.png` | Violin + boxplot across intensity levels |
-| Interaction at 130% | `interaction_highest_intensity.png` | Scatter + regression lines by condition |
-| Combined poster plot | `combined_poster_plot.png` | Condition + intensity plots side by side |
-| Marginal means: intensity | `marginal_means_intensity.png` | Adjusted means with 95% CI across intensities |
-| Manuscript figure | `manuscript_figure_combined.png` | Three-panel figure for publication |
-
-**Manuscript Figure Panel Layout** (`manuscript_figure_combined.png`, 16 × 11 inches):
-
-| Panel | Content | Source |
-|-------|---------|--------|
-| A (top left) | Behavioural accuracy: AO vs. AOMI | `accuracy_by_condition.xlsx` |
-| B (top right) | Z-MEP by TMS intensity (violin plot) | `dataLong` |
-| C (bottom, full width) | Accuracy × Condition interaction, faceted by intensity | `dataLong` |
-
-```r
-manuscriptFigure <- (conditionPlotA | intensityPlotB) /
-  wrap_elements(full = interactionPlotC) +
-  plot_layout(heights = c(1, 1.3))
-```
-
-### Output Files
-
-Saved to: `/derivatives/ancova_analysis/`
-
-```
-merged_data.csv
-ancova_results.txt
-pairwise_intensity.csv
-simple_slopes_highest_intensity.csv
-interaction_by_intensity.csv
-assumption_accuracy_distribution.png
-assumption_linearity.png
-main_effect_condition.png
-main_effect_intensity.png
-interaction_highest_intensity.png
-interaction_all_intensities_faceted.png
-interaction_all_intensities_grid.png
-effect_sizes_by_intensity.png
-slopes_by_intensity.png
-combined_poster_plot.png
-marginal_means_intensity.png
-manuscript_figure_combined.png
-```
-
-### Expected Console Output
-
-```
-=== WOMI MEP ANCOVA Analysis ===
-Output directory: .../ancova_analysis
-
-=== PART 1: LOADING DATA ===
-Loaded accuracy data: 18 participants
-Loaded z-scores data: 18 participants
-Merged data saved.
-
-=== PART 2: RESHAPING DATA ===
-Reshaped data: XXX observations
-Expected: 540 (18 × 2 × 3 × 5)
-Data structure verification:
-  Conditions: AO, AOMI
-  Weights: Light, Moderate, Heavy
-  Intensities: 90%, 100%, 110%, 120%, 130%
-
-=== PART 3: ASSUMPTION CHECKS ===
-1. Normality of accuracy (covariate): [Shapiro-Wilk printed]
-2. Multicollinearity check (VIF): [VIF values printed]
-   ✓ No multicollinearity issues (all VIF < 10)
-3. Linearity check (accuracy × zMEP by condition): [plot saved]
-4. Homogeneity of regression slopes: [ANOVA table printed]
-   ✓ Homogeneity of slopes satisfied for all factors (all p ≥ .05)
-
-=== PART 4: REPEATED MEASURES ANCOVA ===
-=== Mauchly's Test of Sphericity ===
-[Formatted W and p-values printed per effect]
-=== ANCOVA Results (Greenhouse-Geisser corrected) ===
-[ANCOVA table printed]
-=== Effect Sizes (Partial η²) ===
-[Effect size table printed]
-
-=== PART 5: POST-HOC ANALYSES ===
-1. Pairwise comparisons for TMS intensity (Bonferroni-corrected):
-[Contrast table printed]
-4. Estimated marginal means for TMS intensity:
-[EMM table printed]
-
-=== PART 6A: FOLLOW-UP ANALYSIS AT HIGHEST INTENSITY ===
-Observations at 130% intensity: XXX
-=== Mixed Model Results (130% intensity) ===
-[Model summary and ANOVA table printed]
-Simple slopes at 130% intensity:
-[Slopes table with CIs and p-values printed]
-
-=== PART 6B: ACCURACY × CONDITION INTERACTION ACROSS ALL INTENSITIES ===
---- Analyzing 90% RMT ---
---- Analyzing 100% RMT ---
-...
---- Analyzing 130% RMT ---
-=== Summary Table: Accuracy × Condition Interaction by Intensity ===
-[Results table printed]
-=== Intensity-Specific Analysis Complete ===
-
-=== PART 7: GENERATING VISUALISATIONS ===
-[Plots saved]
-
-=== ANALYSIS COMPLETE ===
-Results saved to: .../ancova_analysis
-```
+- `accuracy_by_condition.xlsx`
+- `Fig2_accuracy_by_weight.png`
+- `FigS1_accuracy_by_session.png`
+- `FigS2_accuracy_by_tms_intensity.png`
 
 ---
 
-## Function Reference
+## 2. `mep_analysis.R`
 
-### accuracy.R Functions
+### Input
 
-#### `extractBehaviouralData(participant, session)`
-Reads a BIDS behavioural `.tsv` file and returns accuracy metrics for the specified participant and session.
+- `derivatives/behavioural_analysis/accuracy_by_condition.xlsx` (from `accuracy_analysis.R`)
+- `derivatives/mep_ztransform/mean_z_scores_by_intensity_and_weight.csv` (from `z_transformation.m`)
+- `derivatives/mep_ztransform/mean_z_scores_control_vs_main.csv` (from `z_transformation.m`)
+- `derivatives/vmiq_womi.xlsx` (from OSF)
+- `derivatives/ADM_FDI_raw_MEPs_for_ANOVA.csv` (from OSF)
 
-**Arguments**:
-- `participant`: Integer participant number (e.g., `1`)
-- `session`: Character session label (`"AO"` or `"AOMI"`)
+### Data preparation
 
-**Returns**: A named list with elements:
-- `accuracy`: Overall proportion correct
-- `totalTrials`: Number of valid main trials
-- `correctTrials`: Number of correct trials
-- `responseAccuracy`: Data frame of accuracy by weight response category (1–3)
-- `trialData`: Trial-level data frame with `weightShown`, `weightResponse`, `correct`
+- `dataLong`: one z-scored MEP per participant × condition × weight response × intensity (expected: 18 × 2 × 3 × 5 = 540 rows).
+- `curves`: recruitment-curve slope per participant × condition × weight response, the least-squares slope of zMEP on intensity in z per 10% RMT.
+- `gain`: slope averaged over weight responses, one value per participant × condition.
 
-#### `calcDescriptives(data, varName)`
-Calculates mean, SD, and N for a given variable using tidy evaluation.
+### Section 2: Effects of condition and weight (Hypotheses 1 and 2)
 
-**Returns**: Single-row data frame with `mean`, `sd`, `n`.
+| Analysis | Model |
+|----------|-------|
+| Manipulation check | `zMEP ~ intensity + Error(id / intensity)`; Bonferroni-corrected tests of each intensity against the next |
+| Hypotheses 1 and 2 | `slope ~ condition * weight + Error(id / (condition * weight))` |
+| AOMI vs. AO | number of participants with a steeper slope in AOMI; paired Cohen's dz |
 
----
+**Figure 3**: z-scored MEPs across intensities for each weight response, in AO (A) and AOMI (B); individual participants in grey, group mean ± SD in colour.
 
-### main_3way_ANCOVA_with_accuracy.R — Key Operations
+### Section 3: Exploratory, weight estimation accuracy
 
-This script does not define named helper functions but relies on the following pipeline operations:
+| Analysis | Model |
+|----------|-------|
+| Normality of the covariate | Shapiro–Wilk test |
+| Slope ANCOVA (Table ST1) | `slope ~ accuracy_c + condition * weight + Error(id / (condition * weight))` |
+| Simple slopes | `slope ~ accuracy` per condition, on `gain` |
+| zMEP ANCOVA (Table ST2) | `zMEP ~ accuracy_c + condition * weight * intensity + Error(id / (condition * weight * intensity))` |
+| Per intensity (Table ST3) | `zMEP ~ accuracy_c + condition * weight + Error(id / (condition * weight))` at each intensity; simple slopes `zMEP ~ accuracy_c` per condition on participant means across weights; Bonferroni correction over five intensities |
 
-#### Data Loading
-```r
-read_excel(accuracyFile)   # Loads behavioural accuracy from Stage 1
-read_csv(zScoresFile)      # Loads z-transformed MEP means from MATLAB pipeline
-```
+**Figure 4**: (A) recruitment-curve slope against accuracy in AO and AOMI, with linear fits; (B) simple slopes of accuracy on zMEP per intensity, with Bonferroni-adjusted 95% CIs.
 
-#### Model Fitting
-```r
-aov_car(formula, data, type = 3)   # Repeated measures ANCOVA (afex)
-lmer(formula, data, REML = FALSE)  # Linear mixed model (lme4/lmerTest)
-```
+### Section 4: Control analyses and robustness
 
-#### Post-Hoc and Slopes
-```r
-emmeans(model, pairwise ~ intensity, adjust = "bonferroni")
-emtrends(model, ~ condition, var = "accuracy_c")
-```
+| Analysis | Model |
+|----------|-------|
+| Imagery ability | slope ANCOVA with the centred VMIQ-2 mean score, or kinaesthetic score, as a second covariate |
+| Session order (Table ST4) | `slope ~ order + accuracy_c + condition * weight + Error(id / (condition * weight))`; slope means and SDs by order × condition and order × weight |
+| Control trials | paired t-test of z-scored control-trial MEPs, AO vs. AOMI session |
+| FDI vs. ADM | `mep ~ muscle * condition * intensity + Error(id / (muscle * condition * intensity))` on raw MEPs (Figure S3, mean ± SD) |
+| Residuals | Shapiro–Wilk test and Q–Q plot of the slope ANCOVA residuals (Figure S4) |
+| Permutation test | correlation between accuracy and the AO − AOMI slope difference (equivalent to the accuracy × condition interaction), 10,000 permutations, two-sided, `set.seed(1)` |
+| Leave-one-participant-out | slope ANCOVA re-run 18 times, each without one participant, with accuracy re-centred on the remaining 17 (Figure S5) |
 
-#### Sphericity Testing
-```r
-car::Anova(mlm_model, idata = idata, idesign = ~condition * weight * intensity, type = 3)
-summary(model_anova_sph, multivariate = FALSE)$sphericity.tests
-```
+### Output (`derivatives/ancova_analysis/`)
 
----
-
-## Code Modification Guidelines
-
-### Changing Quality Thresholds for Accuracy Exclusions
-
-```r
-# Exclude participants below chance performance
-accuracyData <- dfAccuracy %>% filter(accuracy > 0.33)
-```
-
-### Changing the Significance Threshold for Sphericity Correction
-
-```r
-# More conservative threshold
-use_GG_effects <- rownames(sphericity_sph)[sphericity_sph[, "p-value"] < 0.01]
-# Original: p < 0.05
-```
-
-### Modifying Plot Aesthetics
-
-The publication theme is defined inline in Part 7 of `main_3way_ANCOVA_with_accuracy.R`:
-
-```r
-pubTheme <- theme_minimal(base_size = 14) +
-  theme(
-    plot.title  = element_text(size = 16, face = "bold", hjust = 0.5),
-    axis.title  = element_text(size = 13),
-    axis.text   = element_text(size = 12),
-    legend.text = element_text(size = 11)
-  )
-```
-
-To apply consistent styling across both scripts, extract this theme into a shared `theme_setup.R` source file.
+- `Fig3_zMEP_by_intensity.png`
+- `Fig4_accuracy_condition.png`
+- `FigS3_mep_by_muscle.png`
+- `FigS4_residual_qq_slope.png`
+- `FigS5_leave_one_out_slope.png`
 
 ---
 
-## Pipeline Dependencies
+## Pipeline dependencies
 
-| Stage | Script | Depends On |
-|-------|--------|------------|
-| 1 | `accuracy.R` | BIDS behavioural files |
-| 2 | `main_3way_ANCOVA_with_accuracy.R` | `accuracy.R` outputs, MATLAB `z-transformation.m` outputs |
-
-The ANCOVA script will stop with an informative error if either upstream file is missing:
-
-```r
-if (!file.exists(accuracyFile)) {
-  stop("Accuracy file not found. Run behavioural analysis script first.")
-}
-if (!file.exists(zScoresFile)) {
-  stop("Z-scores file not found. Run z-transformation script first.")
-}
-```
+| Script | Needs |
+|--------|-------|
+| `accuracy_analysis.R` | BIDS behavioural files; `vmiq_womi.xlsx` |
+| `mep_analysis.R` | `accuracy_by_condition.xlsx`; `z_transformation.m` outputs; `vmiq_womi.xlsx`; `ADM_FDI_raw_MEPs_for_ANOVA.csv` |
 
 ---
 
@@ -718,11 +141,10 @@ if (!file.exists(zScoresFile)) {
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | April 2026 | Initial BIDS-compatible version |
+| 2.0 | November 2026 | Rewritten for the revised manuscript (see README) |
 
 ---
 
-## Contact & Support
+## Contact
 
-For questions about the R pipeline:
-- Emma Nesbit: nesbit@cbs.mpg.de
-- GitHub Issues for bug reports 
+Emma Nesbit: nesbit@cbs.mpg.de · GitHub Issues for bug reports

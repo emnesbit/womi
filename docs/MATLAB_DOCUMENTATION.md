@@ -2,190 +2,150 @@
 
 ## Overview
 
-The MATLAB pipeline processes raw TMS-EMG data from BIDS format through two main stages:
-1. **MEP Extraction & Quality Control** (`main.m`)
-2. **Z-Score Transformation & Aggregation** (`z-transformation.m`)
+The MATLAB pipeline processes the raw TMS-EMG data in BIDS format in two stages:
+
+1. **MEP extraction and quality control** (`preprocessing/main.m`)
+2. **Z-transformation and aggregation** (`analysis/z_transformation.m`)
+
+Run them in this order. The outputs of Stage 2 are the inputs to `mep_analysis.R` (see `R_DOCUMENTATION.md`).
+
+The pipeline processes the FDI muscle only. The EMG files also contain the abductor digiti minimi (ADM) in the column `ADM_in_mV`. To create the file used for the muscle comparison in the Supplementary Material (`ADM_FDI_raw_MEPs_for_ANOVA.csv`), adapt `main.m` to extract the MEPs from both `FDI_in_mV` and `ADM_in_mV` and keep the raw (not z-transformed) MEPs. That file used a baseline RMS threshold of 0.10 mV for both muscles (`config.baselineRMSThreshold = 0.10`), so that trial retention was comparable between the muscles.
 
 ---
 
 ## Stage 1: MEP Extraction (`preprocessing/main.m`)
 
 ### Purpose
-Extracts Motor Evoked Potentials (MEPs) from raw EMG data, applies quality control filters, and saves clean trial-level data.
+
+Extracts peak-to-peak MEP amplitudes from the raw EMG data, applies the quality control criteria and saves the remaining trials.
 
 ### Input Files
-
-The script expects BIDS-formatted data:
 
 ```
 /data/path/to/bids_directory/
 ├── sub-01/
 │   ├── ses-AO/
-│   │   ├── emg/
-│   │   │   └── sub-01_ses-AO_womi_emg.tsv.gz
-│   │   └── beh/
-│   │       └── sub-01_ses-AO_womi_beh.tsv
+│   │   ├── emg/sub-01_ses-AO_womi_emg.tsv.gz
+│   │   └── beh/sub-01_ses-AO_womi_beh.tsv
 │   └── ses-AOMI/
-│       ├── emg/
-│       │   └── sub-01_ses-AOMI_womi_emg.tsv.gz
-│       └── beh/
-│           └── sub-01_ses-AOMI_womi_beh.tsv
+│       ├── emg/sub-01_ses-AOMI_womi_emg.tsv.gz
+│       └── beh/sub-01_ses-AOMI_womi_beh.tsv
 ├── sub-02/
 └── ...
 ```
 
-**EMG File Format** (`*_emg.tsv.gz`):
-- `time_relative_to_TMS_pulse_in_ms`: Time in milliseconds
-- `FDI_in_mV`: First Dorsal Interosseous muscle activity in millivolts
+**EMG file** (`*_emg.tsv.gz`):
+- `time_relative_to_TMS_pulse_in_ms`: time in ms
+- `FDI_in_mV`: first dorsal interosseous EMG in mV
+- `ADM_in_mV`: abductor digiti minimi EMG in mV (not used by `main.m`)
+- `trial`: trial number
 
-**Behavioural File Format** (`*_beh.tsv`):
-- `trial`: Trial number
-- `event_type`: Event category (TMS_pulse_intensity, weight_in_video, etc.)
-- `code`: Event value
+**Behavioural file** (`*_beh.tsv`):
+- `trial`: trial number
+- `event_type`: event category (TMS_pulse_intensity, weight_in_video, etc.)
+- `code`: event value
 
-### Configuration Parameters
+### Configuration
 
 ```matlab
 config.bidsDirectory = '/data/path/to/bids_directory/';
-config.subjects = 1:18;              % Participant IDs
-config.sessions = {'AO', 'AOMI'};    % Session types
+config.subjects = 1:18;              % participant IDs
+config.sessions = {'AO', 'AOMI'};    % sessions
 
-% Analysis windows (seconds)
-config.baselineWindow = [-0.040, -0.010];   % Pre-TMS baseline
-config.mepWindow = [0.015, 0.050];          % MEP measurement window
-config.preconWindow = [-0.050, 0];          % Pre-contraction check
+% Analysis windows (s)
+config.baselineWindow = [-0.040, -0.010];   % baseline RMS
+config.mepWindow      = [0.015, 0.050];     % MEP amplitude
+config.preconWindow   = [-0.050, 0];        % pre-contraction check
 
 % Quality control thresholds
-config.preconThreshold = 0.15;              % Max pre-contraction (mV)
-config.baselineRMSThreshold = 0.05;         % Max baseline RMS (mV)
-config.dummyTrials = [1, 12];               % Trials to exclude
+config.preconThreshold      = 0.15;         % max pre-contraction (mV, peak-to-peak)
+config.baselineRMSThreshold = 0.05;         % max baseline RMS (mV)
+config.dummyTrials          = [1, 12];      % first video trial and first control trial
 ```
 
-### Quality Control Criteria
+### Exclusion Criteria
 
-Trials are excluded if they meet ANY of these criteria:
+A trial is excluded if it meets any of these criteria:
 
-1. **Dummy Trials**: Trials 1 and 12 (practice/buffer trials)
-2. **Noisy Trials**: Manually identified trials with artifacts (see `loadNoisyTrialsList()`)
-3. **Pre-contraction**: Peak-to-peak EMG > 0.15 mV in the 50ms before TMS
-4. **High Baseline Activity**: RMS EMG > 0.05 mV in the 40-10ms before TMS
+1. **Dummy trials**: trials 1 and 12 of each session, i.e. the first video trial and the first control trial
+2. **Noisy trials**: trials with artefacts identified by visual inspection (listed in `loadNoisyTrialsList()`)
+3. **Pre-contraction**: peak-to-peak EMG > 0.15 mV from 50 ms before the TMS pulse to the pulse
+4. **Baseline activity**: RMS EMG > 0.05 mV from 40 to 10 ms before the TMS pulse
+
+A trial can meet more than one criterion, so the counts per criterion add up to more than the total number of excluded trials.
 
 ### Processing Steps
 
-#### 1. Data Loading
+#### 1. Data loading
 ```matlab
 [emgData, behData] = loadBIDSData(config, subID, sessionName);
 ```
-- Loads compressed EMG files (`.tsv.gz`)
-- Converts time from milliseconds to seconds
-- Validates required columns
-- Removes NaN values
-- Loads behavioural event data
-- Removes final row (as safety fix, since it is counted as a 123rd trial otherwise)
+- Loads the compressed EMG file and converts time from ms to s
+- Checks that the required columns are present and removes NaN values
+- Loads the behavioural events
+- Removes the final row of the behavioural file, which would otherwise be counted as a 123rd trial
 
-#### 2. MEP Calculation
+#### 2. MEP calculation
 ```matlab
 results = processMEPs(emgData, behData, config);
 ```
+- **MEP amplitude**: `max(segment) - min(segment)` from 15 to 50 ms after the TMS pulse
+- **Baseline RMS**: `rms(segment)` from −40 to −10 ms
+- **Pre-contraction**: `max(segment) - min(segment)` from −50 to 0 ms
 
-**MEP Amplitude** (peak-to-peak):
-```matlab
-for i = 1:nTrials
-    segment = emgData.fdi(startIdx:endIdx);
-    mepAmplitudes(i) = max(segment) - min(segment);
-end
-```
-- Window: 15-50 ms post-TMS pulse
-- Captures both positive and negative deflections
-
-**Baseline RMS** (quality metric):
-```matlab
-baselineRMS(i) = rms(baselineSegment);
-```
-- Window: -40 to -10 ms before TMS
-- Used for quality control
-
-**Pre-contraction** (muscle activity check):
-```matlab
-precontraction(i) = max(segment) - min(segment);
-```
-- Window: -50 to 0 ms before TMS
-- Peak-to-peak amplitude
-
-#### 3. Behavioural Data Extraction
+#### 3. Behavioural data
 ```matlab
 [intensity, weightShown, weightResponse, isControl] = extractBehaviouralData(behData, nTrials);
 ```
+Per trial:
+- **TMS intensity**: 1–5 (90, 100, 110, 120, 130% RMT)
+- **Weight shown**: weight in the video (1 = light, 2 = moderate, 3 = heavy)
+- **Weight response**: the participant's weight estimate (1–3)
+- **Is control**: no-video control trial, identified by the event type `Control_TMS_pulse`. All other trials are video (weight estimation) trials.
 
-Extracts per trial:
-- **TMS Intensity**: Stimulation level (1-5 scale)
-- **Weight Shown**: Object weight in video (1=Light, 2=Moderate, 3=Heavy)
-- **Weight Response**: Participant's weight judgment (1-3 scale)
-- **Is Control**: Whether trial is a control condition (no weight judgment), detected via presence of event type Control_TMS_pulse in behavioural log. Trials without this event type are treated as main trials (weight judgement trials).
-
-#### 4. Exclusion Application
+#### 4. Exclusions
 ```matlab
 [results, exclusionInfo] = applyExclusions(results, config, noisyTrials, subIdx, sessionName);
 ```
-
-Creates combined exclusion mask:
 ```matlab
 excludeMask = dummyMask | noisyMask | preconMask | baselineMask;
 results(excludeMask, :) = [];
 ```
 
-### Output Files
+### Output (`derivatives/mep_analysis/`)
 
-Saved to: `/derivatives/mep_analysis/`
+- `sub-XX_ses-{AO,AOMI}_mep.tsv` (BIDS derivative)
+- `sub-XX_ses-{AO,AOMI}_mep.mat`
 
-**TSV Format** (BIDS derivatives):
-```
-sub-01_ses-AO_mep.tsv
-```
-
-**MAT Format** (MATLAB native):
-```
-sub-01_ses-AO_mep.mat
-```
-
-**Output Table Structure**:
-| Column | Description | Units |
-|--------|-------------|-------|
-| MEP_Amplitude | Peak-to-peak MEP | mV |
-| TMS_Intensity | Stimulation level | 1-5 |
-| Weight_Shown | Stimulus weight | 1-3 |
-| Weight_Response | Participant judgment | 1-3 |
-| Is_Control | Control trial flag | boolean |
-| Precontraction | Pre-TMS activity | mV |
-| Baseline_RMS | Baseline muscle activity | mV |
+| Column | Description | Unit |
+|--------|-------------|------|
+| MEP_Amplitude | peak-to-peak MEP | mV |
+| TMS_Intensity | intensity level | 1–5 |
+| Weight_Shown | weight in the video | 1–3 |
+| Weight_Response | weight estimate | 1–3 |
+| Is_Control | control trial | 0/1 |
+| Precontraction | pre-TMS activity | mV |
+| Baseline_RMS | baseline activity | mV |
 
 ### Noisy Trials List
 
-Hard-coded in `loadNoisyTrialsList()` function. Example entries:
+Hard-coded in `loadNoisyTrialsList()` as `{participant_id, session, [trial numbers]}`, for example:
 
 ```matlab
 noisyTrials = {
-    'womi2_01', 'AO', [];
+    'womi2_01', 'AO',   [];
     'womi2_01', 'AOMI', [67, 56, 57];
-    'womi2_02', 'AO', [56, 55];
+    'womi2_02', 'AO',   [56, 55];
     ...
 };
 ```
 
-Format: `{participant_id, session, [trial_numbers]}`
-
-### Expected Console Output
+### Console Output
 
 ```
-=== Processing sub-01 ses-AO === 
-
+=== Processing sub-01 ses-AO ===
 Trials: 122 initial -> 120 final (2 excluded)
-
-=== Processing sub-01 ses-AOMI ===
-
-Trials: 122 initial -> 117 final (5 excluded)
-
-
+...
 === PROCESSING SUMMARY ===
 Initial trials: 4392
 Final trials: 4220
@@ -201,181 +161,57 @@ Analysis complete.
 
 ---
 
-## Stage 2: Z-Score Transformation (`analysis/z-transformation.m`)
+## Stage 2: Z-Transformation (`analysis/z_transformation.m`)
 
 ### Purpose
-Performs within-participant standardisation to remove baseline MEP amplitude differences while preserving experimental effects.
 
-### Input Files
+Standardises the MEPs within each participant, which removes differences in overall MEP size between participants (e.g. due to scalp-to-cortex distance) and keeps the within-participant effects.
 
-From Stage 1 output:
-```
-/derivatives/mep_analysis/
-├── sub-01_ses-AO_mep.tsv
-├── sub-01_ses-AOMI_mep.tsv
-├── sub-02_ses-AO_mep.tsv
-└── ...
-```
+### Input
 
-### Z-Score Transformation Method
+The Stage 1 output in `derivatives/mep_analysis/` (`sub-XX_ses-{AO,AOMI}_mep.tsv`).
 
-**Within-Participant Standardisation**:
+### Z-Transformation
 
-1. Merge both sessions for each participant
-2. Calculate participant-specific parameters:
-   ```matlab
-   participantMean = mean(all_MEPs);
-   participantStd = std(all_MEPs);
-   ```
-3. Transform all MEPs:
-   ```matlab
-   zMEP = (MEP - participantMean) / participantStd;
-   ```
+For each participant, **one mean and one SD are computed from all valid trials pooled across both sessions (AO and AOMI), all five intensities and both trial types (video and control trials)**:
 
-**Why Within-Participant?**
-- Removes individual baseline differences (e.g., skull thickness, coil distance)
-- Preserves within-participant experimental effects
-- Makes participants directly comparable
-- Standard approach in TMS-EMG research
-
-### Processing Steps
-
-#### Part 1: Merge and Transform
 ```matlab
-% Load both sessions
-dataAO = loadMEPData(config.inputDirectory, subID, 'AO');
-dataAOMI = loadMEPData(config.inputDirectory, subID, 'AOMI');
-
-% Merge
 mergedData = [dataAO; dataAOMI];
-
-% Calculate z-scores
-mepValues = mergedData.MEP_Amplitude;
-participantMean = mean(mepValues);
-participantStd = std(mepValues);
-zMEP = (mepValues - participantMean) / participantStd;
-
-% Add to data
-mergedData.Z_MEP = zMEP;
-
-% Split back into sessions
-nAO = height(dataAO);
-zDataAO = mergedData(1:nAO, :);
-zDataAOMI = mergedData(nAO+1:end, :);
-```
-- Both sessions are loaded, merged, z-transformed using combined parameters, then split back into session-level files. Individual z-transformed files are saved to /derivatives/mep_ztransform/.
-
-#### Part 2: Control vs Main Trial Means
-```matlab
-resultTable1.AO_Control(k) = mean(dataAO.Z_MEP(dataAO.Is_Control == 1));
-resultTable1.AO_Main(k) = mean(dataAO.Z_MEP(dataAO.Is_Control == 0));
-```
-- Calculates per-participant mean z-scores separately for control and main trials in each session. 
-
-Output: `mean_z_scores_control_vs_main.csv`
-
-| Participant | AO_Control | AO_Main | AOMI_Control | AOMI_Main |
-|-------------|------------|---------|--------------|-----------|
-| sub-01 | -0.234 | 0.156 | -0.189 | 0.201 |
-| ... | ... | ... | ... | ... |
-
-#### Part 3: Mean Z-Scores by Intensity
-```matlab
-for intensity = 1:5
-    controlMask = data.Is_Control == 1 & data.TMS_Intensity == intensity;
-    mainMask = data.Is_Control == 0 & data.TMS_Intensity == intensity;
-    ...
-end
-```
-- Calculates per-participant mean z-scores for each TMS intensity level (1-5) separately for control and main trials in each session.
-
-Output: `mean_z_scores_by_intensity.csv`
-
-Columns: 
-- `AO_Control_1` through `AO_Control_5`
-- `AO_Main_1` through `AO_Main_5`
-- `AOMI_Control_1` through `AOMI_Control_5`
-- `AOMI_Main_1` through `AOMI_Main_5`
-
-#### Part 4: Full Factorial Aggregation
-```matlab
-for intensity = 1:5
-    for weightResp = 1:3
-        wtMask = data.Is_Control == 0 & 
-                 data.Weight_Response == weightResp & 
-                 data.TMS_Intensity == intensity;
-        ...
-    end
-end
-```
-- Calculates mean z-scores for all combinations of session, trial type, weight response and TMS intensity.
-
-Output: `mean_z_scores_by_intensity_and_weight.csv`
-
-Columns:
-- Control conditions (10 columns: 2 sessions × 5 intensities)
-- Weight response conditions (30 columns: 2 sessions × 3 weights × 5 intensities)
-
-Format: `{Session}_{TrialType}_{Weight}_{Intensity}`
-- Example: `AO_WtResp_1_3` = AO session, Light weight response, 100% intensity
-
-#### Part 5: Paired Samples t-test (AO vs. AOMI control trials)
-```matlab
-[~, p, ci, stats] = ttest(aoControlMeans(validIdx), aomiControlMeans(validIdx));
-meanDiff = mean(aoControlMeans(validIdx) - aomiControlMeans(validIdx));
-```
-- Tests whether mean z-scored MEP amplitudes for control trials differ significantly between AO and AOMI sessions, using a withing participant paired t-test. NaN values are excluded from the analysis.
-
-Console Output: 
-```matlab
-t(df) = X.XXX, p = X.XXX
-Mean difference = X.XXX, 95% CI [X.XXX, X.XXX]
+participantMean = mean(mergedData.MEP_Amplitude);
+participantStd  = std(mergedData.MEP_Amplitude);
+mergedData.Z_MEP = (mergedData.MEP_Amplitude - participantMean) / participantStd;
 ```
 
-### Output Files
+The merged data are then split back into the two sessions and saved per session.
 
-Saved to: `/derivatives/mep_ztransform/`
+### Aggregation
 
-**Individual Z-Transformed Data**:
-```
-sub-01_ses-AO_zmep.tsv
-sub-01_ses-AO_zmep.mat
-sub-01_ses-AOMI_zmep.tsv
-sub-01_ses-AOMI_zmep.mat
-```
+| Part | Output | Content |
+|------|--------|---------|
+| 2 | `mean_z_scores_control_vs_main.csv` | mean zMEP per participant for control and video trials in each session (columns `AO_Control`, `AO_Main`, `AOMI_Control`, `AOMI_Main`); input to the control-trial analysis in `mep_analysis.R` |
+| 3 | `mean_z_scores_by_intensity.csv` | mean zMEP per intensity for control and video trials in each session (`AO_Control_1` … `AOMI_Main_5`) |
+| 4 | `mean_z_scores_by_intensity_and_weight.csv` | mean zMEP per session × weight response × intensity, plus control trials per intensity; **input to `mep_analysis.R`** |
+| 5 | console | paired t-test of control-trial zMEPs, AO vs. AOMI session |
 
-**Aggregated CSV Files**:
-```
-mean_z_scores_control_vs_main.csv          # Part 2 output
-mean_z_scores_by_intensity.csv             # Part 3 output
-mean_z_scores_by_intensity_and_weight.csv  # Part 4 output (→ R input)
-```
+Column names in Part 4: `{Session}_{TrialType}_{Intensity}`, where TrialType is `Control` or `WtResp_{1,2,3}`. Example: `AO_WtResp_1_3` = AO session, light weight response, 100% RMT.
 
-### Expected Console Output
+### Output (`derivatives/mep_ztransform/`)
+
+- `sub-XX_ses-{AO,AOMI}_zmep.tsv` and `.mat`: trial-level data with the added `Z_MEP` column
+- the three CSV files above
+
+### Console Output
 
 ```
 === PART 1: Merging and z-transforming data ===
 Participant sub-01: Mean = 0.712, SD = 0.987
-Participant sub-02: Mean = 1.101, SD = 1.439
 ...
-Within-participant z-transformation completed.
-
 === PART 2: Mean z-scores for control vs main trials ===
-[Table displayed]
-Result table 1 saved to .../mean_z_scores_control_vs_main.csv
-
 === PART 3: Mean z-scores by intensity ===
-[Table displayed]
-Result table 2 saved to .../mean_z_scores_by_intensity.csv
-
 === PART 4: Mean z-scores by intensity and subjective weight ===
-[Table displayed]
-Result table 3 saved to .../mean_z_scores_by_intensity_and_weight.csv
-
 === PART 5: Paired t-test - Control trials AO vs AOMI ===
 t(17) = X.XXX, p = X.XXX
 Mean difference = X.XXX, 95% CI [X.XXX, X.XXX]
-
 === ALL ANALYSES COMPLETE ===
 ```
 
@@ -383,87 +219,41 @@ Mean difference = X.XXX, 95% CI [X.XXX, X.XXX]
 
 ## Function Reference
 
-### Main Script Functions
+### `main.m`
 
-#### `initialiseStats()`
-Returns empty statistics structure for tracking exclusions.
+| Function | Description |
+|----------|-------------|
+| `initialiseStats()` / `updateStats(stats, info)` | track exclusion counts across participants |
+| `loadBIDSData(config, subID, sessionName)` | load and check EMG (`.time`, `.fdi`) and behavioural data |
+| `processMEPs(emgData, behData, config)` | MEP amplitude, baseline RMS and pre-contraction per trial |
+| `extractBehaviouralData(behData, nTrials)` | trial-level intensity, weight shown, weight response and control flag |
+| `parseCode(code)` | convert event codes to numbers (`str2double`) |
+| `applyExclusions(results, config, noisyTrials, subIdx, sessionName)` | apply the exclusion criteria; returns the filtered table and the counts |
+| `loadNoisyTrialsList()` | list of noisy trials |
+| `saveResults(outputDir, subID, sessionName, results)` | save as TSV and MAT |
+| `printSummary(stats)` | print the exclusion summary |
 
-#### `updateStats(stats, info)`
-Accumulates exclusion counts across participants.
+### `z_transformation.m`
 
-#### `loadBIDSData(config, subID, sessionName)`
-Loads and validates EMG and behavioural data files.
-
-**Returns**:
-- `emgData`: Structure with `.time` and `.fdi` fields
-- `behData`: Table with trial-level behavioural events
-
-#### `processMEPs(emgData, behData, config)`
-Calculates MEP amplitudes and quality metrics.
-
-**Returns**: Table with columns:
-- MEP_Amplitude, TMS_Intensity, Weight_Shown, Weight_Response
-- Is_Control, Precontraction, Baseline_RMS
-
-#### `extractBehaviouralData(behData, nTrials)`
-Parses behavioural events into trial-level vectors.
-
-#### `parseCode(code)`
-Helper function within extractBehaviouralData(). Converts event code values to numeric format, handling both cell array and already-numeric inputs via str2double.
-
-#### `applyExclusions(results, config, noisyTrials, subIdx, sessionName)`
-Applies all quality control filters and removes bad trials.
-
-**Returns**:
-- `results`: Filtered data table
-- `info`: Structure with exclusion counts
-
-#### `loadNoisyTrialsList()`
-Returns hard-coded cell array of manually identified noisy trials.
-
-#### `saveResults(outputDir, subID, sessionName, results)`
-Saves results in both TSV (BIDS) and MAT formats.
-
-#### `printSummary(stats)`
-Displays final exclusion statistics.
-
-### Z-Transform Script Functions
-
-#### `loadMEPData(inputDir, subID, sessionName)`
-Loads processed MEP data from Stage 1 output.
-
-#### `loadZTransformedData(outputDir, subID, sessionName)`
-Loads z-transformed MEP data.
-
-#### `saveZTransformedData(outputDir, subID, sessionName, data)`
-Saves z-scores in TSV and MAT formats.
+| Function | Description |
+|----------|-------------|
+| `loadMEPData(inputDir, subID, sessionName)` | load Stage 1 output |
+| `loadZTransformedData(outputDir, subID, sessionName)` | load z-transformed data |
+| `saveZTransformedData(outputDir, subID, sessionName, data)` | save as TSV and MAT |
 
 ---
 
-## Code Modification Guidelines
+## Changing Parameters
 
-### Changing Time Windows
-
-To modify analysis windows:
+Time windows and thresholds are set in `config` at the top of `main.m`, for example:
 
 ```matlab
-% Example: Extend MEP window to 60ms
-config.mepWindow = [0.015, 0.060];  % Original: [0.015, 0.050]
+config.mepWindow = [0.015, 0.060];      % default [0.015, 0.050]
+config.baselineRMSThreshold = 0.10;     % default 0.05
 ```
 
-**Important**: Time values must exactly match EMG file timestamps.
+Time values must match the timestamps in the EMG files.
 
-### Adjusting Quality Thresholds
-
-```matlab
-% More lenient (keep more trials)
-config.preconThreshold = 0.20;        % Original: 0.15
-config.baselineRMSThreshold = 0.08;   % Original: 0.05
-
-% More strict (exclude more trials)
-config.preconThreshold = 0.10;
-config.baselineRMSThreshold = 0.03;
-```
 ---
 
 ## Version History
@@ -471,11 +261,10 @@ config.baselineRMSThreshold = 0.03;
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | April 2026 | Initial BIDS-compatible version |
+| 2.0 | November 2026 | Documentation updated for the revised manuscript: dummy trials described correctly; control trials stated as part of the z-transformation; `z_transformation.m` file name; link to the R pipeline and OSF inputs |
 
 ---
 
-## Contact & Support
+## Contact
 
-For questions about the MATLAB pipeline:
-- Emma Nesbit: nesbit@cbs.mpg.de
-- GitHub Issues for bug reports
+Emma Nesbit: nesbit@cbs.mpg.de · GitHub Issues for bug reports
